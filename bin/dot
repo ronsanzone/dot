@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+dot_script="${BASH_SOURCE[0]}"
+while [[ -L "$dot_script" ]]; do
+    dot_dir="$(cd "$(dirname "$dot_script")" && pwd)"
+    dot_script="$(readlink "$dot_script")"
+    [[ "$dot_script" = /* ]] || dot_script="$dot_dir/$dot_script"
+done
+
+DOT_ROOT="$(cd "$(dirname "$dot_script")/.." && pwd)"
+source "$DOT_ROOT/lib/dot.sh"
+
+dot_main "$@"
