@@ -3,23 +3,60 @@
 DOT_STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/dot"
 DOT_PROFILES_DIR="${DOT_ROOT:-$(pwd)}/profiles"
 
-dot_info() { printf '[dot] %s\n' "$*"; }
-dot_warn() { printf '[dot] warning: %s\n' "$*" >&2; }
-dot_die() { printf '[dot] error: %s\n' "$*" >&2; exit 1; }
+DOT_COLOR_MODE="${DOT_COLOR:-auto}"
+if [[ "$DOT_COLOR_MODE" == "always" && -z "${NO_COLOR:-}" ]]; then
+    DOT_USE_COLOR=1
+elif [[ "$DOT_COLOR_MODE" == "never" || -n "${NO_COLOR:-}" ]]; then
+    DOT_USE_COLOR=0
+elif [[ -t 1 ]]; then
+    DOT_USE_COLOR=1
+else
+    DOT_USE_COLOR=0
+fi
+
+if [[ "$DOT_USE_COLOR" -eq 1 ]]; then
+    DOT_RESET=$'\033[0m'
+    DOT_BOLD=$'\033[1m'
+    DOT_DIM=$'\033[2m'
+    DOT_RED=$'\033[31m'
+    DOT_GREEN=$'\033[32m'
+    DOT_YELLOW=$'\033[33m'
+    DOT_BLUE=$'\033[34m'
+    DOT_MAGENTA=$'\033[35m'
+    DOT_CYAN=$'\033[36m'
+else
+    DOT_RESET=""
+    DOT_BOLD=""
+    DOT_DIM=""
+    DOT_RED=""
+    DOT_GREEN=""
+    DOT_YELLOW=""
+    DOT_BLUE=""
+    DOT_MAGENTA=""
+    DOT_CYAN=""
+fi
+
+dot_info() { printf '%b\n' "${DOT_CYAN}✨ dot${DOT_RESET} $*"; }
+dot_ok() { printf '%b\n' "${DOT_GREEN}✓ dot${DOT_RESET} $*"; }
+dot_warn() { printf '%b\n' "${DOT_YELLOW}⚠ dot${DOT_RESET} $*" >&2; }
+dot_die() { printf '%b\n' "${DOT_RED}✗ dot${DOT_RESET} $*" >&2; exit 1; }
+dot_section() { printf '\n%b\n' "${DOT_BOLD}${DOT_MAGENTA}◆ $*${DOT_RESET}"; }
+dot_step() { printf '%b\n' "${DOT_BLUE}→${DOT_RESET} $*"; }
 
 dot_usage() {
     cat <<'EOF'
 Usage:
   dot init <profile>
   dot status
-  dot down [--fetch-only] [--no-doctor]
+  dot down [--fetch-only] [--apply-only] [--no-doctor]
   dot up [item] [-m message]
-  dot doctor
+  dot doctor [--deep]
   dot profile
 
 Core flow:
   dot down    Bring profile repos down to this machine and apply them.
   dot up      Commit and push local changes from profile repos.
+  dot doctor  Check profile repos (+ tools/symlinks with --deep).
 EOF
 }
 
@@ -48,19 +85,19 @@ dot_cmd_init() {
 
     mkdir -p "$DOT_STATE_DIR"
     printf '%s\n' "$profile" > "$DOT_STATE_DIR/profile"
-    dot_info "active profile: $profile"
+    dot_ok "active profile: ${DOT_BOLD}$profile${DOT_RESET}"
     dot_cmd_down --no-doctor
 }
 
 dot_cmd_profile() {
-    dot_info "active profile: $(dot_active_profile)"
+    dot_ok "active profile: ${DOT_BOLD}$(dot_active_profile)${DOT_RESET}"
 }
 
 dot_cmd_status() {
     dot_load_profile
 
-    printf 'Profile: %s\n\n' "$DOT_PROFILE_NAME"
-    printf 'Repos:\n'
+    printf '%b\n\n' "${DOT_BOLD}Profile:${DOT_RESET} ${DOT_CYAN}${DOT_PROFILE_NAME}${DOT_RESET}"
+    printf '%b\n' "${DOT_BOLD}Repos${DOT_RESET}"
 
     local item
     for item in "${DOT_ITEMS[@]}"; do
@@ -70,6 +107,7 @@ dot_cmd_status() {
 
 dot_cmd_down() {
     local fetch_only=0
+    local apply_only=0
     local run_doctor=1
     DOT_DOWN_BLOCKED=" "
     DOT_DOWN_HAD_BLOCKED=0
@@ -77,6 +115,7 @@ dot_cmd_down() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --fetch-only) fetch_only=1 ;;
+            --apply-only) apply_only=1 ;;
             --no-doctor) run_doctor=0 ;;
             *) dot_die "unknown down option: $1" ;;
         esac
@@ -85,13 +124,28 @@ dot_cmd_down() {
 
     dot_load_profile
 
+    # --apply-only: skip clone/reconcile, just re-run each item's APPLY command.
+    # Cheaper than a full `down` when only local config files changed.
+    if [[ "$apply_only" -eq 1 ]]; then
+        printf '\n'
+        local item
+        for item in "${DOT_ITEMS[@]}"; do
+            dot_apply_item "$item"
+        done
+        if [[ "$run_doctor" -eq 1 ]]; then
+            printf '\n'
+            dot_cmd_doctor
+        fi
+        return
+    fi
+
     local item
     for item in "${DOT_ITEMS[@]}"; do
         dot_down_item "$item" "$fetch_only"
     done
 
     if [[ "$fetch_only" -eq 1 ]]; then
-        dot_info "fetch complete; run 'dot status' to inspect incoming changes"
+        dot_ok "fetch complete; run ${DOT_BOLD}dot status${DOT_RESET} to inspect incoming changes"
         return
     fi
 
@@ -151,11 +205,20 @@ dot_cmd_up() {
     if [[ -n "$target" && "$pushed" -eq 0 ]]; then
         dot_warn "nothing pushed for $target"
     elif [[ "$pushed" -eq 0 ]]; then
-        dot_info "nothing to push"
+        dot_ok "nothing to push"
     fi
 }
 
 dot_cmd_doctor() {
+    local deep=0
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --deep) deep=1 ;;
+            *) dot_die "unknown doctor option: $1" ;;
+        esac
+        shift
+    done
+
     dot_load_profile
 
     local ok=1
@@ -178,11 +241,59 @@ dot_cmd_doctor() {
         fi
     done
 
+    if [[ "$deep" -eq 1 ]]; then
+        dot_doctor_deep || ok=0
+    fi
+
     if [[ "$ok" -eq 1 ]]; then
-        dot_info "doctor passed"
+        dot_ok "doctor passed"
     else
         dot_die "doctor found issues"
     fi
+}
+
+# --deep checks: essential tools + broken symlinks under the stow/overlay
+# targets. Defers repo-specific checks to each repo's install.sh rather than
+# hardcoding brew/stow into dot itself (preserves separation of concerns).
+dot_doctor_deep() {
+    local ok=1
+    local sub_ok=1
+
+    dot_section "deep checks"
+
+    # Essential tools. `dot` itself needs git; the rest are what our profile's
+    # apply scripts assume (Homebrew, Node/npm, pi). Missing ones are warnings,
+    # not hard failures, since a profile may legitimately not use all of them.
+    local tool
+    for tool in git brew node npm pi; do
+        if command -v "$tool" >/dev/null 2>&1; then
+            dot_ok "tool present: $tool"
+        else
+            dot_warn "tool missing: $tool"
+            sub_ok=0
+        fi
+    done
+
+    # Broken symlinks under the two trees our install scripts target. Recurse
+    # only one level into ~/.config (per-package dirs) and into ~/.pi/agent
+    # (extensions/scripts/skills), then check each symlink resolves.
+    dot_step "checking for broken symlinks"
+    local broken=0
+    local dir entry target
+    for dir in "$HOME/.config" "$HOME/.pi/agent"; do
+        [[ -d "$dir" ]] || continue
+        while IFS= read -r -d '' entry; do
+            if [[ -L "$entry" && ! -e "$entry" ]]; then
+                target="$(readlink "$entry")"
+                dot_warn "broken symlink: $entry -> $target"
+            broken=1
+            sub_ok=0
+            fi
+        done < <(find "$dir" -maxdepth 2 -type l -print0 2>/dev/null)
+    done
+    [[ "$broken" -eq 0 ]] && dot_ok "no broken symlinks under ~/.config or ~/.pi/agent"
+
+    [[ "$sub_ok" -eq 1 ]]
 }
 
 dot_down_item() {
@@ -193,12 +304,12 @@ dot_down_item() {
     path="$(dot_item_path "$item")"
     repo="$(dot_item_repo "$item")"
 
-    printf '\n==> %s\n' "$label"
+    dot_section "$label"
 
     if [[ ! -d "$path/.git" ]]; then
         [[ -n "$repo" ]] || dot_die "$label has no repo configured"
         mkdir -p "$(dirname "$path")"
-        dot_info "cloning $repo -> $path"
+        dot_step "cloning ${DOT_BOLD}$repo${DOT_RESET} -> $path"
         git clone "$repo" "$path"
         return
     fi
@@ -230,7 +341,7 @@ dot_apply_item() {
         return 0
     fi
 
-    printf '==> applying %s\n' "$label"
+    dot_step "applying ${DOT_BOLD}$label${DOT_RESET}"
     (cd "$path" && eval "$apply")
 }
 
@@ -263,7 +374,7 @@ dot_up_item() {
         fi
     fi
 
-    printf '\n==> %s\n' "$label"
+    dot_section "$label"
     git -C "$path" status --short
 
     local commit_message="$message"
@@ -271,10 +382,10 @@ dot_up_item() {
         commit_message="Update $label"
     fi
 
-    dot_info "committing: $commit_message"
+    dot_step "committing: ${DOT_BOLD}$commit_message${DOT_RESET}"
     git -C "$path" add -A
     git -C "$path" commit -m "$commit_message"
-    dot_info "pushing $label"
+    dot_step "pushing ${DOT_BOLD}$label${DOT_RESET}"
     git -C "$path" push
 }
 
@@ -290,7 +401,7 @@ dot_reconcile_item() {
         return 1
     fi
 
-    dot_info "reconciling $label"
+    dot_step "reconciling ${DOT_BOLD}$label${DOT_RESET}"
     if git -C "$path" pull --rebase --autostash --stat; then
         if dot_git_has_unmerged_files "$path"; then
             dot_warn "$label has conflicts after applying local changes"
@@ -317,8 +428,8 @@ dot_push_if_ahead() {
     fi
 
     if [[ "$ahead" -gt 0 && "$behind" -eq 0 ]]; then
-        printf '\n==> %s\n' "$label"
-        dot_info "pushing $label"
+        dot_section "$label"
+        dot_step "pushing ${DOT_BOLD}$label${DOT_RESET}"
         git -C "$path" push
         return 0
     fi
@@ -346,12 +457,12 @@ dot_git_has_unmerged_files() {
 dot_print_resolution_hint() {
     local path="$1"
     cat >&2 <<EOF
-[dot] resolve manually:
+⚠ dot resolve manually:
   cd $path
   git status
   # fix conflicts, then follow git's rebase/merge instructions
 
-[dot] then rerun:
+✨ dot then rerun:
   dot status
   dot up
 EOF
@@ -364,7 +475,7 @@ dot_print_item_status() {
     path="$(dot_item_path "$item")"
 
     if [[ ! -d "$path/.git" ]]; then
-        printf '  %-20s missing    %s\n' "$label" "$path"
+        printf '  %b %-20s %b%-8s%b %s\n' "❔" "$label" "$DOT_YELLOW" "missing" "$DOT_RESET" "$path"
         return
     fi
 
@@ -380,7 +491,52 @@ dot_print_item_status() {
     read -r ahead behind < <(dot_git_ahead_behind "$path")
     state="$(dot_remote_state "$ahead" "$behind")"
 
-    printf '  %-20s %-8s %-14s %s\n' "$label" "$dirty" "$branch" "$state"
+    printf '  %b %-20s %b%-8s%b %-14s %b\n' \
+        "$(dot_status_icon "$dirty" "$ahead" "$behind")" \
+        "$label" \
+        "$(dot_dirty_color "$dirty")" \
+        "$dirty" \
+        "$DOT_RESET" \
+        "$branch" \
+        "$(dot_state_color "$ahead" "$behind")$state${DOT_RESET}"
+}
+
+dot_status_icon() {
+    local dirty="$1"
+    local ahead="$2"
+    local behind="$3"
+
+    if [[ "$ahead" == "?" || "$behind" == "?" ]]; then
+        printf '❔'
+    elif [[ "$dirty" == "dirty" ]]; then
+        printf '●'
+    elif [[ "$ahead" -eq 0 && "$behind" -eq 0 ]]; then
+        printf '✓'
+    else
+        printf '↕'
+    fi
+}
+
+dot_dirty_color() {
+    local dirty="$1"
+    if [[ "$dirty" == "clean" ]]; then
+        printf '%s' "$DOT_GREEN"
+    else
+        printf '%s' "$DOT_YELLOW"
+    fi
+}
+
+dot_state_color() {
+    local ahead="$1"
+    local behind="$2"
+
+    if [[ "$ahead" == "?" || "$behind" == "?" ]]; then
+        printf '%s' "$DOT_YELLOW"
+    elif [[ "$ahead" -eq 0 && "$behind" -eq 0 ]]; then
+        printf '%s' "$DOT_GREEN"
+    else
+        printf '%s' "$DOT_CYAN"
+    fi
 }
 
 dot_remote_state() {
