@@ -49,13 +49,14 @@ Usage:
   dot init <profile>
   dot status
   dot down [--fetch-only] [--apply-only] [--no-doctor]
-  dot up [item] [-m message]
+  dot up [item] [-m message] [--skip-dirty]
   dot doctor [--deep]
   dot profile
 
 Core flow:
   dot down    Bring profile repos down to this machine and apply them.
   dot up      Commit and push local changes from profile repos.
+              With --skip-dirty, leave dirty repos alone (push only clean-and-ahead).
   dot doctor  Check profile repos (+ tools/symlinks with --deep).
 EOF
 }
@@ -167,6 +168,7 @@ dot_cmd_down() {
 dot_cmd_up() {
     local target=""
     local message=""
+    local skip_dirty=0
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -174,6 +176,9 @@ dot_cmd_up() {
                 shift
                 [[ $# -gt 0 ]] || dot_die "missing message after -m"
                 message="$1"
+                ;;
+            --skip-dirty)
+                skip_dirty=1
                 ;;
             -*)
                 dot_die "unknown up option: $1"
@@ -195,7 +200,7 @@ dot_cmd_up() {
         if [[ -n "$target" && "$target" != "$item" && "$target" != "$(dot_item_label "$item")" ]]; then
             continue
         fi
-        dot_up_item "$item" "$message" && pushed=1
+        dot_up_item "$item" "$message" "$skip_dirty" && pushed=1
     done
 
     if [[ "$DOT_UP_HAD_BLOCKED" -eq 1 ]]; then
@@ -348,6 +353,7 @@ dot_apply_item() {
 dot_up_item() {
     local item="$1"
     local message="$2"
+    local skip_dirty="${3:-0}"
     local label path
     label="$(dot_item_label "$item")"
     path="$(dot_item_path "$item")"
@@ -367,11 +373,20 @@ dot_up_item() {
             dot_push_if_ahead "$item"
             return $?
         fi
-    else
-        if ! dot_reconcile_item "$item"; then
-            DOT_UP_HAD_BLOCKED=1
-            return 1
-        fi
+        # reconcile left it dirty — fall through to dirty handling
+    fi
+
+    # Reaching here means the repo is dirty (either was, or reconcile made it so).
+    # With --skip-dirty, leave it alone for manual commit instead of sweeping
+    # uncommitted changes into an auto-generated "Update <label>" commit.
+    if [[ "$skip_dirty" -eq 1 ]]; then
+        dot_warn "$label has uncommitted changes; skipping (--skip-dirty). Commit manually and rerun dot up."
+        return 1
+    fi
+
+    if ! dot_reconcile_item "$item"; then
+        DOT_UP_HAD_BLOCKED=1
+        return 1
     fi
 
     dot_section "$label"
