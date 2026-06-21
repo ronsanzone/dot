@@ -15,6 +15,8 @@ dot doctor
 
 ## Commands
 
+`dot` uses color and a few symbols in interactive terminals. Set `NO_COLOR=1` or `DOT_COLOR=never` to disable color, or `DOT_COLOR=always` to force color in captured output.
+
 ### `dot init <profile>`
 
 Sets the active profile and runs an initial `dot down`.
