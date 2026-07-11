@@ -281,12 +281,13 @@ dot_doctor_deep() {
 
     # Broken symlinks under the trees our install scripts target. Recurse
     # only one level into ~/.config (per-package dirs), ~/.pi/agent
-    # (extensions/scripts/skills), and ~/.claude (safe config links), then check
-    # each symlink resolves.
+    # (extensions/scripts/skills-local/private packages), ~/.agents (shared
+    # skills/agents), and ~/.claude (safe config links), then check each
+    # symlink resolves.
     dot_step "checking for broken symlinks"
     local broken=0
     local dir entry target
-    for dir in "$HOME/.config" "$HOME/.pi/agent" "$HOME/.claude"; do
+    for dir in "$HOME/.config" "$HOME/.pi/agent" "$HOME/.agents" "$HOME/.claude"; do
         [[ -d "$dir" ]] || continue
         while IFS= read -r -d '' entry; do
             if [[ -L "$entry" && ! -e "$entry" ]]; then
@@ -297,7 +298,7 @@ dot_doctor_deep() {
             fi
         done < <(find "$dir" -maxdepth 2 -type l -print0 2>/dev/null)
     done
-    [[ "$broken" -eq 0 ]] && dot_ok "no broken symlinks under ~/.config, ~/.pi/agent, or ~/.claude"
+    [[ "$broken" -eq 0 ]] && dot_ok "no broken symlinks under ~/.config, ~/.pi/agent, ~/.agents, or ~/.claude"
 
     [[ "$sub_ok" -eq 1 ]]
 }

@@ -62,6 +62,16 @@ Checks that profile repos exist and configured apply commands are present.
 
 Profiles live in `profiles/*.env`. The first profile is `profiles/personal.env`.
 
+The personal profile applies agent packages in this order:
+
+1. `agent-essentials` — Claude configuration and shared npx skill sources.
+2. `pi-essentials` — public Pi configuration and Pi-local skills.
+3. `context-engineering-workflows-v2` — shared workflow skills and agent variants.
+4. `mongo-pi-extensions` — private Pi package and Mongo/Grove runtime overlays.
+
+This order is intentional. The private Mongo package is additive and must not
+write generated skills, extensions, agents, or npm state into the public Pi repo.
+
 Each item needs a label, repo, path, and optional apply command:
 
 ```bash
